@@ -11,6 +11,7 @@ globals [
   avg-queue-length
   product-data
   num-products
+  popular-item-id
 ]
 
 patches-own [
@@ -36,11 +37,13 @@ customers-own [
   destination
   checkout-timer
   paid?
+  pickup-timer
 ]
 
 
 to setup
   clear-all
+  set popular-item-id 1
   if not is-number? num-customers [ set num-customers 10 ]
   if not is-number? rearrangement-policy [ set rearrangement-policy 0 ]
   if not is-number? rearrangement-interval [ set rearrangement-interval 50 ]
@@ -152,13 +155,29 @@ to create-new-customer
     set destination nobody
     set heading 0
     set checkout-timer 0
-    set paid? false ;;
+    set paid? false
+    set pickup-timer 0
   ]
 end
 
 to-report generate-shopping-list
   let all-product-ids map [p -> item 0 p] product-data
-  report n-of (min list (3 + random 3) length all-product-ids) all-product-ids
+
+  let other-product-ids remove popular-item-id all-product-ids
+  let base-list n-of (min list (2 + random 3) length other-product-ids) other-product-ids
+
+
+  if random-float 1.0 < popular-item-prob [
+    if not member? popular-item-id base-list [
+      set base-list lput popular-item-id base-list
+    ]
+  ]
+
+  if empty? base-list [
+    set base-list (list one-of all-product-ids)
+  ]
+
+  report base-list
 end
 
 
@@ -194,21 +213,29 @@ to decide-what-to-do
     ]
   ]
 
+  if state = "picking-up-item" [
+    set pickup-timer pickup-timer - 1
+    if pickup-timer <= 0 [
+      pick-up-product
+      set state "shopping"
+    ]
+  ]
+
   if state = "going-to-checkout" [
     let target-checkout min-one-of checkout-patches with [status = "free"] [distance myself]
-
     if target-checkout != nobody [
       set destination target-checkout
       set path find-path patch-here destination
     ]
   ]
 
-
   if state = "in-queue" [
     ask patch-here [ set status "busy" ]
 
     if checkout-timer = 0 [
-      set checkout-timer (10 + random 11)
+      ;; Antes: (10 + random 11) -> 10-20 ticks
+      ;; Ahora: (20 + random 21) -> 20-40 ticks
+      set checkout-timer (20 + random 21)
     ]
 
     set checkout-timer checkout-timer - 1
@@ -220,7 +247,6 @@ to decide-what-to-do
       ask patch-here [ set status "free" ]
     ]
   ]
-
 
   if state = "leaving" [
     set destination exit-point
@@ -243,7 +269,8 @@ end
 
 to perform-arrival-action
   if state = "shopping" [
-    pick-up-product
+    set state "picking-up-item"
+    set pickup-timer (3 + random 4)
     check-for-impulse-buy
   ]
 
@@ -251,9 +278,8 @@ to perform-arrival-action
     set state "in-queue"
   ]
 
-
   if state = "leaving" [
-    if patch-here = exit-point [ ;; Comprueba si ha llegado a la salida.
+    if patch-here = exit-point [
       record-final-stats
       die
     ]
@@ -664,6 +690,21 @@ false
 "" ""
 PENS
 "default" 1.0 0 -16777216 true "" "plot avg-queue-length"
+
+SLIDER
+101
+324
+273
+357
+popular-item-prob
+popular-item-prob
+0
+1
+0.9
+0.01
+1
+NIL
+HORIZONTAL
 
 @#$#@#$#@
 ## WHAT IS IT?
