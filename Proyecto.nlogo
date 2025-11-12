@@ -707,41 +707,88 @@ NIL
 HORIZONTAL
 
 @#$#@#$#@
-## WHAT IS IT?
+## QUÉ ES?
 
-(a general understanding of what the model is trying to show or explain)
+Este modelo simula el comportamiento de los clientes en un supermercado. El objetivo es analizar cómo la disposición de los productos (el *layout* de la tienda) y el comportamiento de los clientes (como las compras por impulso) afectan a la eficiencia general de la tienda, medida en términos de tiempo de compra y longitud de las colas en las cajas.
 
-## HOW IT WORKS
+El modelo presenta un entorno de supermercado con pasillos, estanterías de productos, una entrada, una salida y cajas para pagar. Los clientes (agentes) entran en la tienda con una lista de la compra predefinida, buscan los productos, los añaden a su carrito, pueden realizar compras por impulso, y finalmente se dirigen a una caja para pagar antes de salir.
 
-(what rules the agents use to create the overall behavior of the model)
+Una característica clave de este modelo es la capacidad de reorganizar dinámicamente la disposición de los productos basándose en diferentes políticas, como la popularidad de los productos o el tiempo que tardan los clientes en encontrarlos. Esto permite experimentar y encontrar la disposición más óptima para la tienda.
 
-## HOW TO USE IT
+## CÓMO FUNCIONA?
 
-(how to use the model, including a description of each of the items in the Interface tab)
+### El Entorno
 
-## THINGS TO NOTICE
+El mundo del modelo se divide en diferentes tipos de "patches" (celdas):
+- **Pasillos (Gris):** Zonas por las que los clientes pueden caminar. El color de los pasillos cambia a modo de "mapa de calor", volviéndose más claro (hacia el azul) cuanto más transitados son.
+- **Productos (Marrón):** Estanterías donde se ubican los productos. Los clientes no pueden caminar sobre ellas, pero sí pueden situarse en un pasillo adyacente para coger un producto.
+- **Cajas (Amarillo):** Puntos donde los clientes pagan. Tienen un estado: `status = "free"` (libre) o `status = "busy"` (ocupado).
+- **Entrada (Verde):** El punto por donde entran todos los clientes.
+- **Salida (Violeta):** El punto por donde los clientes abandonan la simulación.
 
-(suggested things for the user to notice while running the model)
+### Clientes y su Comportamiento
 
-## THINGS TO TRY
+Cada cliente es un agente con un ciclo de vida y un comportamiento definidos por una máquina de estados:
 
-(suggested things for the user to try to do (move sliders, switches, etc.) with the model)
+1.  **Entrada y Lista de la Compra:** Un cliente es creado en la `entry-point` y se le asigna una `shopping-list` (lista de la compra). Esta lista se genera aleatoriamente, con una probabilidad mayor de incluir un "artículo popular" (`popular-item-id`).
 
-## EXTENDING THE MODEL
+2.  **Búsqueda de Productos (Estado "shopping"):**
+    - El cliente toma el primer producto de su lista como `target-product`.
+    - Utiliza un algoritmo de búsqueda de caminos (`find-path`, basado en Búsqueda en Anchura o BFS) para encontrar la ruta más corta a la estantería de ese producto.
+    - Sigue la ruta calculada.
 
-(suggested things to add or change in the Code tab to make the model more complicated, detailed, accurate, etc.)
+3.  **Recogida de Productos (Estado "picking-up-item"):**
+    - Al llegar a la estantería, el cliente pasa unos pocos "ticks" (un tiempo simulado) recogiendo el producto.
+    - Durante este tiempo, existe una pequeña probabilidad (`impulse-buy-prob`) de que el cliente realice una compra por impulso de un producto en una estantería cercana. Si esto ocurre, el cliente se vuelve rojo temporalmente.
+    - Una vez recogido, el producto se mueve de la `shopping-list` al `shopping-cart` (carrito).
 
-## NETLOGO FEATURES
+4.  **Hacia la Caja (Estado "going-to-checkout"):**
+    - Cuando la lista de la compra está vacía, el cliente busca la caja libre (`status = "free"`) que esté más cerca y se dirige hacia ella.
 
-(interesting or unusual features of NetLogo that the model uses, particularly in the Code tab; or where workarounds were needed for missing features)
+5.  **En la Cola y Pago (Estado "in-queue"):**
+    - Al llegar a la caja, el cliente espera un tiempo variable para simular el proceso de pago. La caja se marca como "busy".
 
-## RELATED MODELS
+6.  **Salida (Estado "leaving"):**
+    - Una vez ha pagado, el cliente se dirige a la salida. Al llegar, se registran sus estadísticas (tiempo total en la tienda) y el agente desaparece de la simulación.
 
-(models in the NetLogo Models Library and elsewhere which are of related interest)
+### Reorganización del Layout
 
-## CREDITS AND REFERENCES
+El modelo puede reorganizar la disposición de los productos cada cierto intervalo de tiempo (`rearrangement-interval`) según una política seleccionada (`rearrangement-policy`):
 
-(a reference to the model's URL on the web if it has one, as well as any other necessary credits, citations, and links)
+- **Política 0 (Sin cambios):** La disposición de los productos no cambia nunca.
+- **Política 1 (Popularidad Ponderada por Búsqueda):** Los productos que son muy demandados Y que tardan mucho en ser encontrados se mueven a las mejores ubicaciones (las más cercanas a la entrada).
+- **Política 2 (Popularidad):** Los productos más populares se mueven a las mejores ubicaciones, independientemente de cuánto se tarde en encontrarlos.
+- **Política 3 (Aleatoria):** Los productos se reorganizan de forma completamente aleatoria.
+
+## CÓMO USARLO?
+
+1.  **Botón `setup`:** Prepara la simulación. Limpia el mundo, crea el layout de la tienda, distribuye los productos iniciales y reinicia todas las métricas y gráficos.
+2.  **Botón `go`:** Inicia o avanza la simulación un paso (un "tick"). Los clientes se moverán, comprarán y saldrán de la tienda. Se crearán nuevos clientes si el número actual es menor que `num-customers`.
+3.  **Slider `num-customers`:** Controla el número máximo de clientes que pueden estar en la tienda simultáneamente.
+4.  **Slider `rearrangement-policy`:** Permite elegir la política de reorganización del layout (0: Ninguna, 1: Popularidad Ponderada, 2: Popularidad, 3: Aleatoria).
+5.  **Slider `rearrangement-interval`:** Define cada cuántos ticks se ejecuta la reorganización del layout (si la política no es 0).
+6.  **Slider `impulse-buy-prob`:** Establece la probabilidad (de 0 a 1) de que un cliente realice una compra por impulso al recoger un producto de su lista.
+7.  **Slider `popular-item-prob`:** Define la probabilidad de que la lista de la compra de un nuevo cliente incluya el producto más popular.
+
+### Monitores y Gráficos
+
+- **Vista del Mundo:** Muestra el movimiento de los clientes. El mapa de calor en los pasillos indica las zonas más transitadas.
+- **Gráfico "Tiempo de Compra":** Muestra la evolución del tiempo medio que tardan los clientes en completar sus compras (`avg-shopping-time`).
+- **Monitores:** Proporcionan métricas clave en tiempo real, como el número de clientes que han finalizado (`total-customers-finished`), el tiempo medio de compra y la longitud media de la cola en las cajas (`avg-queue-length`).
+
+## COSAS PARA PROBAR
+
+- **COMPARAR POLÍTICAS DE REORGANIZACIÓN:** Ejecuta la simulación durante un largo periodo con cada una de las políticas (`rearrangement-policy`). ¿Cuál de ellas reduce más el tiempo medio de compra? ¿La política 2 (solo popularidad) es siempre la mejor, o la política 1 (que considera el tiempo de búsqueda) es más efectiva?
+- **EFECTO DE LA DENSIDAD DE CLIENTES:** Aumenta `num-customers` gradualmente. ¿Cómo afecta al tiempo de compra y a la longitud de las colas? ¿Se crean cuellos de botella en ciertos pasillos (obsérvalo en el mapa de calor)?
+- **IMPACTO DE LAS COMPRAS POR IMPULSO:** Fija una configuración y ejecuta dos simulaciones: una con `impulse-buy-prob` en 0 y otra con un valor alto (ej. 0.2). ¿Cuánto aumenta el tiempo medio de compra debido a estos productos extra?
+- **OPTIMIZACIÓN DEL INTERVALO:** Si usas una política de reorganización, experimenta con diferentes valores de `rearrangement-interval`. ¿Es mejor reorganizar la tienda muy a menudo o con menos frecuencia?
+
+## EXTENDIENDO EL MODELO
+
+- **COMPORTAMIENTOS DE CLIENTE MÁS COMPLEJOS:** Añadir diferentes tipos de clientes. Por ejemplo, clientes "con prisa" que abandonan si la cola es muy larga, o clientes "exploradores" que recorren pasillos al azar.
+- **EVITAR AGLOMERACIONES:** Programar a los clientes para que eviten los pasillos que ya están muy concurridos por otros clientes.
+- **DIFERENTES LAYOUTS:** Modificar el procedimiento `setup-layout` para crear tiendas con formas diferentes (por ejemplo, con un pasillo central o una estructura más laberíntica).
+- **STOCK DE PRODUCTOS:** Añadir una variable de stock a los productos. Si un producto se agota, el cliente tendría que decidir si buscar un sustituto o irse sin él.
 @#$#@#$#@
 default
 true
