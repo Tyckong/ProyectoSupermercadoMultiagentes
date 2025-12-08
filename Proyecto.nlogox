@@ -14,6 +14,9 @@ globals [
   product-data
   num-products
   popular-item-id
+  registro-transacciones
+  total-impulse-items    ; Suma total de items impulsivos comprados por todos los clientes que salieron
+  avg-impulse-items      ; El promedio actual (total-impulse-items / total-customers-finished)
 ]
 
 patches-own [
@@ -21,7 +24,6 @@ patches-own [
   product-id
   visits-per-patch
   status
-  valid-walkable-neighbors
 ]
 
 breed [customers customer]
@@ -41,7 +43,9 @@ customers-own [
   checkout-timer
   paid?
   pickup-timer
+  total-price
 ]
+
 
 to setup
   clear-all
@@ -50,18 +54,16 @@ to setup
   if not is-number? rearrangement-policy [ set rearrangement-policy 0 ]
   if not is-number? rearrangement-interval [ set rearrangement-interval 50 ]
   if not is-number? impulse-buy-prob [ set impulse-buy-prob 0.05 ]
-
   setup-layout
   setup-products
-  
-  ask patches [  ;;Precalculate valid neighbours to save on time and power.
-    set valid-walkable-neighbors neighbors with [p-type != "producto"]
-  ]
-
+  set total-impulse-items 0
+  set avg-impulse-items 0
   set total-customers-finished 0
   set total-shopping-time 0
   set avg-shopping-time 0
   set avg-queue-length 0
+  set registro-transacciones []
+  
   reset-ticks
 end
 
@@ -69,22 +71,23 @@ to go
   if count customers < num-customers [
     create-new-customer
   ]
-  
   ask customers [ customer-step ]
+  
   if (rearrangement-policy != 0) and (ticks > 0) and (ticks mod rearrangement-interval = 0) [
     rearrange-layout
-    ask patches [
-      set valid-walkable-neighbors neighbors with [p-type != "producto"]
-    ]
   ]
-
   update-global-metrics
 
   set-current-plot "Tiempo de Compra"
   plot avg-shopping-time
+  
+  set-current-plot "Compras Impulsivas"
+  plot avg-impulse-items
 
   tick
 end
+
+; CONFIGURACIÓN DEL ENTORNO
 
 to setup-layout
   ask patches [
@@ -130,12 +133,15 @@ to setup-products
   set num-products count product-patches
   set product-data []
   let i 1
+  
   repeat num-products [
-    set product-data lput (list i 0 0 0) product-data
+    let price (1 + random-float 99)
+    set product-data lput (list i 0 0 0 price) product-data
     set i i + 1
   ]
   
   let available-patches product-patches
+  
   foreach product-data [ p ->
     ask one-of available-patches [
       set product-id item 0 p
@@ -144,6 +150,19 @@ to setup-products
     ]
   ]
 end
+
+
+to-report get-product-price [p-id]
+  ; Buscamos el producto en nuestro global
+  let product-info first filter [p -> item 0 p = p-id] product-data
+  ; Si lo encontramos, devolvemos el precio ¿
+  if product-info != false [
+    report item 4 product-info
+  ]
+  ; Si por alguna razón no lo encontramos, devolvemos 0
+  report 0
+end
+
 
 to create-new-customer
   create-customers 1 [
@@ -169,8 +188,10 @@ end
 
 to-report generate-shopping-list
   let all-product-ids map [p -> item 0 p] product-data
+
   let other-product-ids remove popular-item-id all-product-ids
   let base-list n-of (min list (2 + random 3) length other-product-ids) other-product-ids
+
 
   if random-float 1.0 < popular-item-prob [
     if not member? popular-item-id base-list [
@@ -224,12 +245,8 @@ to decide-what-to-do
     ]
   ]
 
-  if state = "going-to-checkout" [ ;;Here we choose the closest currently free register, or any if they're all busy.
+  if state = "going-to-checkout" [
     let target-checkout min-one-of checkout-patches with [status = "free"] [distance myself]
-    if target-checkout = nobody [
-        set target-checkout min-one-of checkout-patches [distance myself]
-    ]
-    
     if target-checkout != nobody [
       set destination target-checkout
       set path find-path patch-here destination
@@ -240,7 +257,12 @@ to decide-what-to-do
     ask patch-here [ set status "busy" ]
 
     if checkout-timer = 0 [
-      set checkout-timer (20 + random 21)
+      let base-time 5  
+      let time-per-item 2 
+      let num-items length shopping-cart
+      let processing-time (base-time + (time-per-item * num-items))
+      
+      set checkout-timer processing-time
     ]
 
     set checkout-timer checkout-timer - 1
@@ -259,13 +281,14 @@ to decide-what-to-do
   ]
 end
 
+
 to follow-path
   if not empty? path [
     let next-step first path
-    if next-step != patch-here [
-       face next-step
-       move-to next-step
-       set path-length path-length + 1
+    if patch-here != next-step [
+      face next-step
+      move-to next-step
+      set path-length path-length + 1
     ]
     set path but-first path
   ]
@@ -301,6 +324,8 @@ end
 
 to check-for-impulse-buy
   let potential-impulse-patches neighbors with [p-type = "producto"]
+
+
   foreach patches-to-list potential-impulse-patches [ a-patch ->
     if random-float 1.0 < impulse-buy-prob [
       let impulsive-item [product-id] of a-patch
@@ -317,19 +342,33 @@ to-report patches-to-list [ps]
   report [self] of ps
 end
 
+
+to wait-in-queue
+  let my-checkout patch-here
+  if count other customers-here = 0 and random 10 = 0 [
+    set state "leaving"
+  ]
+end
+
+
 to-report find-path [start-patch target-patch]
   if target-patch = nobody [ report [] ]
+
   let valid-goals nobody
   ifelse [p-type] of target-patch = "producto" [
+
     let target-neighbors [neighbors] of target-patch
+
     set valid-goals target-neighbors with [p-type != "producto"]
+
   ]
   [
     set valid-goals patch-set target-patch
   ]
 
   if not any? valid-goals [ report [] ]
-  let queue (list start-patch)   ;;Upgraded BFS heehee
+
+  let queue (list start-patch)
   let visited-patches patch-set start-patch
   let came-from table:make
 
@@ -340,7 +379,6 @@ to-report find-path [start-patch target-patch]
     if member? current-patch valid-goals [
       let path-reversed (list current-patch)
       let current-key (list [pxcor] of current-patch [pycor] of current-patch)
-      
       while [table:has-key? came-from current-key] [
         set current-patch table:get came-from current-key
         set path-reversed lput current-patch path-reversed
@@ -349,10 +387,10 @@ to-report find-path [start-patch target-patch]
       report but-first reverse path-reversed
     ]
 
-    let current-neighbors [valid-walkable-neighbors] of current-patch  ;;We use precalculated neighbors for the pathfinding.
-    let valid-next-steps current-neighbors with [not member? self visited-patches]
+    let current-neighbors [neighbors] of current-patch
+    let valid-neighbors current-neighbors with [(p-type != "producto") and not member? self visited-patches]
 
-    ask valid-next-steps [
+    ask valid-neighbors [
       set visited-patches (patch-set visited-patches self)
       set queue lput self queue
       let key (list [pxcor] of self [pycor] of self)
@@ -363,39 +401,90 @@ to-report find-path [start-patch target-patch]
   report []
 end
 
+
 to update-product-data [prod-id search-duration]
   let index prod-id - 1
   let old-data item index product-data
+  
   let new-demand (item 1 old-data) + 1
   let new-search-time (item 2 old-data) + search-duration
   let new-num-searches (item 3 old-data) + 1
-  set product-data replace-item index product-data (list prod-id new-demand new-search-time new-num-searches)
+  
+  let price (item 4 old-data) 
+
+  set product-data replace-item index product-data (list prod-id new-demand new-search-time new-num-searches price)
 end
 
+to-report bubble-sort-by-score [list-to-sort]
+  if length list-to-sort < 2 [ report list-to-sort ]
+  let sorted-list list-to-sort
+  let n length sorted-list
+  repeat (n - 1) [
+    let i 0
+    while [ i < n - 1 ] [
+      let item1 item i sorted-list
+      let item2 item (i + 1) sorted-list
+      if ( item 1 item2 ) > ( item 1 item1 ) [
+        set sorted-list replace-item i sorted-list item2
+        set sorted-list replace-item (i + 1) sorted-list item1
+      ]
+      set i i + 1
+    ]
+  ]
+  report sorted-list
+end
+
+to-report bubble-sort-by-distance [patch-list]
+  if length patch-list < 2 [ report patch-list ]
+  let sorted-list patch-list
+  let n length sorted-list
+  let entryx [pxcor] of entry-point
+  let entryy [pycor] of entry-point
+  repeat (n - 1) [
+    let i 0
+    while [ i < n - 1 ] [
+      let p1 item i sorted-list
+      let p2 item (i + 1) sorted-list
+      let dx1 ([pxcor] of p1) - entryx
+      let dy1 ([pycor] of p1) - entryy
+      let d1 dx1 * dx1 + dy1 * dy1
+      let dx2 ([pxcor] of p2) - entryx
+      let dy2 ([pycor] of p2) - entryy
+      let d2 dx2 * dx2 + dy2 * dy2
+      if d1 > d2 [
+        set sorted-list replace-item i sorted-list p2
+        set sorted-list replace-item (i + 1) sorted-list p1
+      ]
+      set i i + 1
+    ]
+  ]
+  report sorted-list
+end
+
+
 to rearrange-layout
-  let product-metrics []  ;;Calculate metrics and scores for the rearrangement.
+  let product-metrics []
+  set total-impulse-items 0
+  set avg-impulse-items 0
   foreach product-data [ p ->
     let p-id item 0 p
     let p-demand item 1 p
     let p-total-search-time item 2 p
     let p-num-searches item 3 p
     let p-avg-search-time ifelse-value (p-num-searches > 0) [ p-total-search-time / p-num-searches ] [ 0 ]
-    
     let score 0
-    if rearrangement-policy = 1 [ set score p-demand * p-avg-search-time ]  ;;First Policy: High Demand and Hard to Find -> Higher Score.
-    if rearrangement-policy = 2 [ set score (- p-demand) ]  ;;Second Policy: High Demand -> Lower Score.
+    if rearrangement-policy = 1 [ set score p-demand * p-avg-search-time ]
+    if rearrangement-policy = 2 [ set score (- p-demand) ]
     if rearrangement-policy = 3 [ set score random-float 1.0 ]
     set product-metrics lput (list p-id score) product-metrics
   ]
 
-  let sorted-product-metrics sort-by [ [a b] -> item 1 a > item 1 b ] product-metrics ;;Arrange products according to Score (Descending)
-  let locations sort-on [distance entry-point] product-patches
-  
+  let sorted-products bubble-sort-by-score product-metrics
+  let patch-list [self] of product-patches
+  let locations bubble-sort-by-distance patch-list
   let i 0
-  let limit min (list length sorted-product-metrics length locations)
-  
-  while [ i < limit ] [
-    let prod-info item i sorted-product-metrics
+  while [ i < length sorted-products and i < length locations ] [
+    let prod-info item i sorted-products
     let loc item i locations
     ask loc [
       set product-id item 0 prod-info
@@ -403,6 +492,16 @@ to rearrange-layout
     ]
     set i i + 1
   ]
+end
+
+to-report compare-products-by-score [p1 p2]
+  report (item 1 p1) > (item 1 p2)
+end
+
+to-report compare-patches-by-distance [p1 p2]
+  let d1 ([distance entry-point] of p1)
+  let d2 ([distance entry-point] of p2)
+  report d1 < d2
 end
 
 to update-global-metrics
@@ -422,6 +521,35 @@ end
 to record-final-stats
   set exit-time ticks
   let time-in-store exit-time - entry-time
+
+  ; Calcular el precio total de la compra
+  set total-price 0
+  foreach shopping-cart [ item-id ->
+    set total-price (total-price + get-product-price item-id)
+  ]
+  
+  
+  set total-impulse-items total-impulse-items + items-impulsive
+  
+  ; Aumentamos el contador de clientes finalizados
+  set total-customers-finished total-customers-finished + 1
+
+  
+  ; Calculamos el nuevo promedio (evitando división por cero)
+  if total-customers-finished > 0 [
+    set avg-impulse-items total-impulse-items / total-customers-finished
+  ]
+  ;
+
+  ; Guarda la boleta en el registro global
+  ; Formato: [tiempo-en-tienda, precio-total, cantidad-de-items]
+  let boleta (list time-in-store total-price (length shopping-cart))
+  set registro-transacciones lput boleta registro-transacciones
+  
+  ; Imprimir la boleta en la consola para verla en tiempo real
+  print (word "Cliente finalizado: Tiempo=" time-in-store ", Total=$" precision total-price 2 ", Items=" length shopping-cart)
+  print (word "Cliente finalizado: Impulsivos=" items-impulsive " Promedio Global=" precision avg-impulse-items 3)
+
   set total-customers-finished total-customers-finished + 1
   set total-shopping-time total-shopping-time + time-in-store
 end
@@ -435,17 +563,16 @@ to update-heatmap
 end]]></code>
   <widgets>
     <view x="346" wrappingAllowedX="false" y="116" frameRate="30.0" minPycor="-16" height="431" showTickCounter="true" patchSize="13.061" fontSize="10" wrappingAllowedY="false" width="431" tickCounterLabel="ticks" maxPycor="16" updateMode="0" maxPxcor="16" minPxcor="-16"></view>
-    <slider x="152" step="1" y="115" max="200" width="172" display="num-customers" height="50" min="10" direction="Horizontal" default="200.0" variable="num-customers"></slider>
-    <slider x="152" step="50" y="174" max="1000" width="172" display="rearrangement-interval" height="52" min="100" direction="Horizontal" default="150.0" variable="rearrangement-interval"></slider>
-    <slider x="151" step="0.01" y="234" max="1.0" width="173" display="impulse-buy-prob" height="50" min="0.0" direction="Horizontal" default="0.1" variable="impulse-buy-prob"></slider>
-    <slider x="150" step="1" y="293" max="3" width="174" display="rearrangement-policy" height="50" min="0" direction="Horizontal" default="2.0" variable="rearrangement-policy"></slider>
-    <slider x="148" step="0.01" y="353" max="1" width="175" display="popular-item-prob" height="50" min="0" direction="Horizontal" default="0.9" variable="popular-item-prob"></slider>
-    <button x="149" y="412" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="174" display="setup">setup</button>
-    <button x="148" y="462" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="175" display="go">go</button>
-    <monitor x="641" precision="0" y="48" height="60" fontSize="11" width="134" display="ticks">ticks</monitor>
-    <monitor x="487" precision="0" y="48" height="60" fontSize="11" width="143" display=" avg-shopping-time">round avg-shopping-time</monitor>
-    <monitor x="344" precision="0" y="49" height="60" fontSize="11" width="131" display="N° customers">count customers</monitor>
-    <plot x="795" autoPlotX="true" yMax="10.0" autoPlotY="true" yAxis="Ticks por Cliente" y="116" xMin="0.0" height="175" legend="false" xMax="10.0" yMin="0.0" width="230" xAxis="ticks" display="Tiempo de Compra">
+    <button x="88" y="46" height="40" disableUntilTicks="false" forever="false" kind="Observer" width="63" display="setup">setup</button>
+    <button x="164" y="46" height="40" disableUntilTicks="false" forever="true" kind="Observer" width="63" display="go">go</button>
+    <slider x="102" step="1" y="132" max="200" width="172" display="num-customers" height="50" min="10" direction="Horizontal" default="200.0" variable="num-customers"></slider>
+    <slider x="102" step="50" y="197" max="1000" width="172" display="rearrangement-interval" height="50" min="100" direction="Horizontal" default="150.0" variable="rearrangement-interval"></slider>
+    <slider x="102" step="0.01" y="267" max="1.0" width="150" display="impulse-buy-prob" height="50" min="0.0" direction="Horizontal" default="0.1" variable="impulse-buy-prob"></slider>
+    <slider x="101" step="1" y="332" max="3" width="172" display="rearrangement-policy" height="50" min="0" direction="Horizontal" default="2.0" variable="rearrangement-policy"></slider>
+    <monitor x="314" precision="0" y="43" height="60" fontSize="11" width="109" display="N° customers">count customers</monitor>
+    <monitor x="434" precision="0" y="43" height="60" fontSize="11" width="123" display=" avg-shopping-time">round avg-shopping-time</monitor>
+    <monitor x="568" precision="0" y="43" height="60" fontSize="11" width="100" display="ticks">ticks</monitor>
+    <plot x="825" autoPlotX="true" yMax="10.0" autoPlotY="true" yAxis="Ticks por Cliente" y="101" xMin="0.0" height="175" legend="false" xMax="10.0" yMin="0.0" width="230" xAxis="ticks" display="Tiempo de Compra">
       <setup></setup>
       <update></update>
       <pen interval="1.0" mode="0" display="default" color="-2674135" legend="true">
@@ -453,7 +580,7 @@ end]]></code>
         <update>plot avg-shopping-time</update>
       </pen>
     </plot>
-    <plot x="796" autoPlotX="true" yMax="2.0" autoPlotY="true" yAxis="Clientes en Cola" y="305" xMin="0.0" height="175" legend="false" xMax="10.0" yMin="0.0" width="230" xAxis="ticks" display="Congestión">
+    <plot x="816" autoPlotX="true" yMax="2.0" autoPlotY="true" yAxis="Clientes en Cola" y="305" xMin="0.0" height="175" legend="false" xMax="10.0" yMin="0.0" width="230" xAxis="ticks" display="Congestión">
       <setup></setup>
       <update></update>
       <pen interval="1.0" mode="0" display="default" color="-16777216" legend="true">
@@ -461,8 +588,16 @@ end]]></code>
         <update>plot avg-queue-length</update>
       </pen>
     </plot>
-    <monitor x="1035" precision="2" y="118" height="60" fontSize="11" width="175" display="Tiempo de Compra Promedio">avg-shopping-time</monitor>
-    <monitor x="1036" precision="2" y="306" height="60" fontSize="11" width="176" display="Largo de Cola Promedio">avg-queue-length</monitor>
+    <slider x="101" step="0.01" y="399" max="1" width="172" display="popular-item-prob" height="50" min="0" direction="Horizontal" default="0.9" variable="popular-item-prob"></slider>
+    <plot x="1112" autoPlotX="true" yMax="10.0" autoPlotY="true" y="104" xMin="0.0" height="176" legend="false" xMax="10.0" yMin="0.0" width="230" display="Compras Impulsivas">
+      <setup></setup>
+      <update></update>
+      <pen interval="1.0" mode="0" display="pen-0" color="-13210332" legend="true">
+        <setup></setup>
+        <update>plot total-impulse-items</update>
+      </pen>
+    </plot>
+    <monitor x="697" precision="17" y="42" height="60" fontSize="11" width="100" display="Compras Impulsivas">total-impulse-items</monitor>
   </widgets>
   <info>## QUÉ ES?
 
@@ -1380,4 +1515,8 @@ El modelo puede reorganizar la disposición de los productos cada cierto interva
     </shape>
   </linkShapes>
   <previewCommands>setup repeat 75 [ go ]</previewCommands>
+  <systemDynamics dt="1.0">
+    <reservoir x="232" y="47"></reservoir>
+    <reservoir x="232" y="414"></reservoir>
+  </systemDynamics>
 </model>
