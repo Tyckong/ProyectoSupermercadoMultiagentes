@@ -557,7 +557,7 @@ end]]></code>
     </plot>
     <monitor x="1035" precision="2" y="118" height="60" fontSize="11" width="175" display="Tiempo de Compra Promedio">avg-shopping-time</monitor>
     <monitor x="1036" precision="2" y="306" height="60" fontSize="11" width="176" display="Largo de Cola Promedio">avg-queue-length</monitor>
-    <chooser x="75" y="47" height="60" variable="validation-mode" current="1" width="250" display="validation-mode">
+    <chooser x="154" y="48" height="60" variable="validation-mode" current="1" width="170" display="validation-mode">
       <choice type="string" value="Optimized"></choice>
       <choice type="string" value="Random"></choice>
     </chooser>
